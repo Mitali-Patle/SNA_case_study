@@ -378,3 +378,88 @@ class TestResilience:
                 first = df.iloc[0][col]
                 last = df.iloc[-1][col]
                 assert last <= first + 0.1, f"LCC unexpectedly increased for {strategy}"
+
+
+# ── Planted structures, temporal dynamics and dependency analysis ─────────
+
+
+@pytest.fixture
+def temporal_dataset(smoke_config) -> tuple:
+    """Generate the full temporal dataset for the smoke configuration."""
+    from generator.temporal_generator import generate_temporal_dataset
+    return generate_temporal_dataset(smoke_config)
+
+
+class TestPlantedStructures:
+    """Tests for the planted bridges, communities and dependency groups."""
+
+    def test_bridges_can_carry_flow(self, sample_network):
+        """Bridges need both inbound and outbound edges to lie on any path."""
+        _, edges, gt = sample_network
+        sources = set(edges["source_node"])
+        targets = set(edges["target_node"])
+        for bridge in gt["planted_bridges"]:
+            assert bridge in sources and bridge in targets, f"{bridge} cannot be an intermediary"
+
+    def test_most_edges_stay_inside_a_region(self, sample_network):
+        orgs, edges, _ = sample_network
+        region = dict(zip(orgs["organization_id"], orgs["region"]))
+        intra = (edges["source_node"].map(region) == edges["target_node"].map(region)).mean()
+        assert intra > 0.5
+
+    def test_dependency_edges_planted(self, sample_network):
+        _, edges, gt = sample_network
+        edge_set = set(zip(edges["source_node"], edges["target_node"]))
+        for group in gt["planted_dependency_groups"]:
+            for mfg in group["dependent_manufacturers"]:
+                assert (group["critical_supplier"], mfg) in edge_set
+
+
+class TestTemporalDynamics:
+    """Tests for organization entry/exit and temporal snapshots."""
+
+    def test_entries_and_exits_are_logged(self, temporal_dataset):
+        _, _, events, _ = temporal_dataset
+        types = set(events["event_type"])
+        assert "organization_entry" in types
+        assert "organization_exit" in types
+
+    def test_generation_is_reproducible(self, smoke_config):
+        from generator.temporal_generator import generate_temporal_dataset
+        _, txns1, _, _ = generate_temporal_dataset(smoke_config)
+        _, txns2, _, _ = generate_temporal_dataset(smoke_config)
+        pd.testing.assert_frame_equal(txns1, txns2)
+
+    def test_monthly_snapshots_have_no_inactive_nodes(self, temporal_dataset):
+        from graph.builder import build_temporal_graphs
+        orgs, txns, _, _ = temporal_dataset
+        snapshots = build_temporal_graphs(orgs, txns, mode="monthly")
+        for month, G in snapshots.items():
+            assert all(d > 0 for _, d in G.degree()), f"Isolated node in snapshot {month}"
+
+    def test_cumulative_snapshots_never_shrink(self, temporal_dataset):
+        from graph.builder import build_temporal_graphs
+        orgs, txns, _, _ = temporal_dataset
+        snapshots = build_temporal_graphs(orgs, txns, mode="cumulative")
+        edge_counts = [snapshots[m].number_of_edges() for m in sorted(snapshots)]
+        assert edge_counts == sorted(edge_counts)
+
+
+class TestDependencyAnalysis:
+    """Tests for dependency analysis and reversed PageRank."""
+
+    def test_logistics_edges_not_counted_as_supply(self, sample_graph):
+        from sna.dependencies import analyze_dependencies
+        results = analyze_dependencies(sample_graph)
+        for record in results["single_source_nodes"]:
+            assert record["supplier_type"] != "logistics_provider"
+        conc = results["upstream_concentration"]
+        if not conc.empty:
+            assert (conc["top_supplier_type"] != "logistics_provider").all()
+
+    def test_centrality_table_has_reversed_pagerank(self, sample_graph, smoke_config):
+        from sna.centrality import compute_all_centrality
+        df, stats = compute_all_centrality(sample_graph, smoke_config)
+        assert "pagerank_reversed" in df.columns
+        assert abs(df["pagerank_reversed"].sum() - 1.0) < 1e-3
+        assert "weighting_note" in stats
