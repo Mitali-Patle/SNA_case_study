@@ -18,6 +18,7 @@ A comprehensive Social Network Analysis platform for modeling, analyzing, and vi
   - [Quick Smoke Test](#quick-smoke-test)
 - [Interactive Dashboard](#interactive-dashboard)
 - [Running Individual Experiments](#running-individual-experiments)
+- [Gephi Export & Comparison](#gephi-export--comparison)
 - [Running Tests](#running-tests)
 - [Configuration](#configuration)
 - [Output & Reports](#output--reports)
@@ -118,7 +119,9 @@ supply-chain-sna/
 ├── graph/                           # Graph construction
 │   ├── builder.py                   # Builds networkx.DiGraph + temporal snapshots
 │   ├── validation.py                # Validates graph integrity
-│   └── build.py                     # CLI entry point: python -m graph.build
+│   ├── build.py                     # CLI entry point: python -m graph.build
+│   ├── export_gephi.py              # Exports the graph to GEXF for Gephi
+│   └── compare_gephi.py             # Compares Gephi's statistics with this project's
 │
 ├── sna/                             # SNA analysis modules
 │   ├── network_metrics.py           # Global stats (density, WCC, clustering, efficiency)
@@ -327,6 +330,48 @@ python -m experiments.run --experiment ground_truth
 
 ---
 
+## Gephi Export & Comparison
+
+The graph can be opened in [Gephi](https://gephi.org) to cross-check the results with an independent tool. Run the experiments first so the export includes their scores.
+
+```bash
+# Write data/exports/supply_chain.gexf and data/exports/gephi_nodes.csv
+python -m graph.export_gephi
+```
+
+Every node carries its organization attributes, the centrality scores computed here (`nx_*` columns), its detected community, core number and planted role, so Gephi can colour and size nodes directly.
+
+To compare Gephi's own statistics with this project's:
+
+1. Open `data/exports/supply_chain.gexf` in Gephi.
+2. In the Statistics panel run Average Degree, Network Diameter (betweenness, closeness), Eigenvector Centrality, PageRank and Modularity.
+3. In the Data Laboratory, export the nodes table to `data/exports/gephi_statistics.csv`.
+4. Run the comparison:
+
+```bash
+python -m graph.compare_gephi data/exports/gephi_statistics.csv
+```
+
+This prints, per metric, the Spearman rank correlation, the top-20 overlap and the largest absolute difference, plus the ARI between Gephi's modularity classes and the detected communities, and saves the table to `reports/tables/gephi_comparison.csv`. Rank agreement is the figure to read: Gephi normalises some measures differently (betweenness, closeness), so absolute values can differ while the rankings match.
+
+---
+
+## Gephi Export
+
+Gephi is used as a second tool for visualization and to cross-check the statistics.
+
+```bash
+# Write data/exports/supply_chain.gexf (open this file in Gephi)
+python -m graph.export_gephi
+
+# After exporting Gephi's node table to CSV, compare it with the NetworkX results
+python -m graph.compare_gephi data/exports/gephi_statistics.csv
+```
+
+See [`docs/gephi_guide.md`](docs/gephi_guide.md) for the settings to use in Gephi.
+
+---
+
 ## Running Tests
 
 ```bash
@@ -382,9 +427,12 @@ data/
 │   ├── events.csv                 # Organization entries, exits and disruptions
 │   ├── transactions.csv           # All transaction records
 │   └── ground_truth.json          # Planted hubs, bridges, communities, dependency groups
-└── processed/
-    ├── supply_chain_graph_frequency.pkl     # Main graph (edge weight = transaction count)
-    └── temporal_graphs_frequency.pkl        # Monthly snapshot graphs
+├── processed/
+│   ├── supply_chain_graph_frequency.pkl     # Main graph (edge weight = transaction count)
+│   └── temporal_graphs_frequency.pkl        # Monthly snapshot graphs
+└── exports/                       # Created by python -m graph.export_gephi
+    ├── supply_chain.gexf          # Graph with analysis results as node attributes
+    └── gephi_nodes.csv            # The same node table as CSV
 
 reports/
 ├── summary.md                     # Auto-generated research summary
@@ -412,6 +460,8 @@ reports/
 ---
 
 ## Methodology & Design Decisions
+
+The written case study, with interpretation of every result, is in [`docs/case_study_report.md`](docs/case_study_report.md).
 
 Key architectural and methodological choices are documented in [`BUILD_DECISIONS.md`](BUILD_DECISIONS.md). Highlights:
 

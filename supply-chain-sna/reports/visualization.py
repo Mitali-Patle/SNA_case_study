@@ -330,13 +330,23 @@ def _grouped_layout(G: nx.Graph, groups: dict[Any, list[str]], seed: int = 42) -
         angle = 2 * math.pi * i / n_groups
         cx, cy = ring * math.cos(angle), ring * math.sin(angle)
         radius = 0.9 * math.sin(math.pi / max(2, n_groups)) * math.sqrt(len(nodes) / (total / n_groups))
-        radius = min(radius, 0.55) if n_groups > 1 else 1.0
+        radius = min(radius, 0.45) if n_groups > 1 else 1.0
         sub = G.subgraph(nodes)
         try:
             local = nx.spring_layout(sub, seed=seed, k=2.0 / max(1.0, math.sqrt(len(nodes))), iterations=60)
         except Exception:
             local = nx.random_layout(sub, seed=seed)
-        for node, (x, y) in local.items():
+        # Scale by the typical spread, not the extreme one, so a few loosely
+        # attached nodes cannot squeeze the rest of the cluster into a point.
+        pts = np.array([local[n] for n in sub.nodes()], dtype=float).reshape(-1, 2)
+        pts = pts - np.median(pts, axis=0)
+        dist = np.hypot(pts[:, 0], pts[:, 1])
+        spread = float(np.percentile(dist, 90)) if len(dist) > 1 else 1.0
+        pts = pts / (spread or 1.0)
+        dist = np.hypot(pts[:, 0], pts[:, 1])
+        over = dist > 1.25
+        pts[over] = pts[over] / dist[over, None] * 1.25
+        for node, (x, y) in zip(sub.nodes(), pts):
             pos[node] = (cx + radius * float(x), cy + radius * float(y))
     return pos
 
@@ -470,7 +480,7 @@ def plot_network_graph(
             angle = 2 * math.pi * i / len(groups)
             label = f"Community {g}" if by_community else str(g)
             fig.add_annotation(
-                x=1.62 * math.cos(angle), y=1.62 * math.sin(angle),
+                x=1.75 * math.cos(angle), y=1.75 * math.sin(angle),
                 text=f"<b>{label}</b><br>{len(members)} orgs",
                 showarrow=False, font=dict(size=11, color=INK_SECONDARY),
             )
@@ -484,8 +494,8 @@ def plot_network_graph(
     fig.update_layout(
         hovermode="closest",
         legend=dict(title_text=legend_title, itemsizing="constant"),
-        xaxis=dict(visible=False, range=[-1.85, 1.85]),
-        yaxis=dict(visible=False, range=[-1.85, 1.85], scaleanchor="x"),
+        xaxis=dict(visible=False, range=[-2.05, 2.05]),
+        yaxis=dict(visible=False, range=[-2.05, 2.05], scaleanchor="x"),
         margin=dict(l=20, r=20, t=70, b=20),
     )
 
@@ -723,6 +733,8 @@ def plot_temporal_metrics(
             ),
             row=idx // n_cols + 1, col=idx % n_cols + 1,
         )
+        if col == "num_communities":
+            fig.update_yaxes(dtick=1, row=idx // n_cols + 1, col=idx % n_cols + 1)
     _style(fig, "Monthly evolution of the network", height=330 * n_rows + 60, width=1200, showlegend=False)
     fig.update_xaxes(tickformat="%b %y", nticks=5)
     if output_dir:

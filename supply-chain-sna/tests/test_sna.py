@@ -463,3 +463,48 @@ class TestDependencyAnalysis:
         assert "pagerank_reversed" in df.columns
         assert abs(df["pagerank_reversed"].sum() - 1.0) < 1e-3
         assert "weighting_note" in stats
+
+
+class TestGephiExport:
+    """Tests for the Gephi export and the Gephi vs. NetworkX comparison."""
+
+    def test_export_graph_roundtrips_through_gexf(self, sample_graph, smoke_config, tmp_path):
+        from graph.export_gephi import build_export_graph
+        from sna.centrality import compute_all_centrality
+        centrality_df, _ = compute_all_centrality(sample_graph, smoke_config)
+        H = build_export_graph(sample_graph, centrality_df, pd.DataFrame(), pd.DataFrame(), {})
+        assert H.number_of_nodes() == sample_graph.number_of_nodes()
+        assert H.number_of_edges() == sample_graph.number_of_edges()
+        node = next(iter(H.nodes))
+        assert "nx_pagerank" in H.nodes[node]
+        assert H.nodes[node]["planted_role"] == "none"
+        path = tmp_path / "graph.gexf"
+        nx.write_gexf(H, path)
+        assert nx.read_gexf(path).number_of_edges() == H.number_of_edges()
+
+    def test_export_graph_marks_planted_roles(self, sample_graph):
+        from graph.export_gephi import build_export_graph
+        nodes = list(sample_graph.nodes)
+        ground_truth = {"planted_hubs": [nodes[0]], "planted_bridges": [nodes[1]]}
+        H = build_export_graph(sample_graph, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), ground_truth)
+        assert H.nodes[nodes[0]]["planted_role"] == "hub"
+        assert H.nodes[nodes[1]]["planted_role"] == "bridge"
+
+    def test_compare_matches_gephi_columns(self):
+        from graph.compare_gephi import compare
+        df = pd.DataFrame({
+            "Id": [f"N{i}" for i in range(30)],
+            "nx_pagerank": [i / 100 for i in range(30)],
+            "pageranks": [i / 100 for i in range(30)],
+            "nx_betweenness": [i / 10 for i in range(30)],
+            "betweenesscentrality": [i * 5.0 for i in range(30)],
+        })
+        result = compare(df).set_index("metric")
+        assert set(result.index) == {"pagerank", "betweenness"}
+        assert result.loc["pagerank", "max_abs_difference"] == 0
+        assert result.loc["betweenness", "spearman_rho"] == 1.0
+        assert result.loc["betweenness", "top20_overlap"] == 20
+
+    def test_compare_without_gephi_statistics_is_empty(self):
+        from graph.compare_gephi import compare
+        assert compare(pd.DataFrame({"Id": ["A"], "nx_pagerank": [1.0]})).empty

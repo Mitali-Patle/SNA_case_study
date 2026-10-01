@@ -57,7 +57,7 @@ planted_structures:
 
 temporal:
   organization_entry_rate: 0.01
-  organization_exit_rate: 0.005
+  organization_exit_rate: 0.02
   relationship_new_rate: 0.03
   relationship_drop_rate: 0.01
   disruption_months: [2]
